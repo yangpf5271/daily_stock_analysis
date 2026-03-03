@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import litellm
 from litellm import Router
 
-from src.config import get_config
+from src.config import get_config, get_api_keys_for_model, extra_litellm_params
 
 logger = logging.getLogger(__name__)
 
@@ -116,40 +116,6 @@ class LLMToolAdapter:
             e.get('model_name', '').startswith('__legacy_') for e in self._config.llm_model_list
         )
 
-    def _get_api_keys_for_model(self, model: str) -> List[str]:
-        """Return API keys for the given litellm model (legacy path only)."""
-        config = self._config
-        if model.startswith("gemini/") or model.startswith("vertex_ai/"):
-            return [k for k in config.gemini_api_keys if k and len(k) >= 8]
-        if model.startswith("anthropic/"):
-            return [k for k in config.anthropic_api_keys if k and len(k) >= 8]
-        # DeepSeek models: check dedicated keys first, fall back to openai keys
-        _model_lower = model.lower()
-        if 'deepseek' in _model_lower:
-            ds_keys = [k for k in config.deepseek_api_keys if k and len(k) >= 8]
-            if ds_keys:
-                return ds_keys
-        if model.startswith("openai/") or "/" not in model:
-            return [k for k in config.openai_api_keys if k and len(k) >= 8]
-        # Other LiteLLM-native providers – API key from env
-        return []
-
-    def _extra_litellm_params(self, model: str) -> dict:
-        """Build extra litellm params (legacy path only)."""
-        config = self._config
-        params: Dict[str, Any] = {}
-        # DeepSeek dedicated keys → use DeepSeek API base
-        _model_lower = model.lower()
-        if 'deepseek' in _model_lower and config.deepseek_api_keys:
-            params["api_base"] = "https://api.deepseek.com/v1"
-            return params
-        if model.startswith("openai/") or "/" not in model:
-            if config.openai_base_url:
-                params["api_base"] = config.openai_base_url
-            if config.openai_base_url and "aihubmix.com" in config.openai_base_url:
-                params["extra_headers"] = {"APP-Code": "GPIJ3886"}
-        return params
-
     def _init_litellm(self) -> None:
         """Initialize litellm Router from channels / YAML / legacy keys."""
         config = self._config
@@ -178,7 +144,7 @@ class LLMToolAdapter:
             return
 
         # --- Legacy path ---
-        keys = self._get_api_keys_for_model(litellm_model)
+        keys = get_api_keys_for_model(litellm_model, config)
         if not keys:
             logger.info(
                 f"Agent LLM: litellm initialized (model={litellm_model}, "
@@ -187,14 +153,14 @@ class LLMToolAdapter:
             return
 
         if len(keys) > 1:
-            extra_params = self._extra_litellm_params(litellm_model)
+            ep = extra_litellm_params(litellm_model, config)
             legacy_model_list = [
                 {
                     "model_name": litellm_model,
                     "litellm_params": {
                         "model": litellm_model,
                         "api_key": k,
-                        **extra_params,
+                        **ep,
                     },
                 }
                 for k in keys
@@ -297,10 +263,10 @@ class LLMToolAdapter:
             response = self._router.completion(**call_kwargs)
         else:
             # Legacy path: direct call for fallback/other models
-            keys = self._get_api_keys_for_model(model)
+            keys = get_api_keys_for_model(model, self._config)
             if keys:
                 call_kwargs["api_key"] = keys[0]
-            call_kwargs.update(self._extra_litellm_params(model))
+            call_kwargs.update(extra_litellm_params(model, self._config))
             response = litellm.completion(**call_kwargs)
 
         return self._parse_litellm_response(response, model)

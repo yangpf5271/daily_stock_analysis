@@ -21,7 +21,7 @@ from json_repair import repair_json
 from litellm import Router
 
 from src.agent.llm_adapter import get_thinking_extra_body
-from src.config import Config, get_config
+from src.config import Config, get_config, get_api_keys_for_model, extra_litellm_params
 
 logger = logging.getLogger(__name__)
 
@@ -533,49 +533,6 @@ class GeminiAnalyzer:
         if not self._litellm_available:
             logger.warning("No LLM configured (LITELLM_MODEL / API keys), AI analysis will be unavailable")
 
-    @staticmethod
-    def _get_api_keys_for_model(model: str, config: Config) -> List[str]:
-        """Return explicitly managed API keys for the model (legacy path only).
-
-        When llm_model_list is populated (channels / YAML), this method is NOT
-        used — the Router handles key selection.  Kept for backward compat when
-        no Router is built and a direct litellm.completion() call is needed.
-        """
-        if model.startswith("gemini/") or model.startswith("vertex_ai/"):
-            return [k for k in config.gemini_api_keys if k and len(k) >= 8]
-        if model.startswith("anthropic/"):
-            return [k for k in config.anthropic_api_keys if k and len(k) >= 8]
-        # DeepSeek models: check dedicated keys first, fall back to openai keys
-        _model_lower = model.lower()
-        if 'deepseek' in _model_lower:
-            ds_keys = [k for k in config.deepseek_api_keys if k and len(k) >= 8]
-            if ds_keys:
-                return ds_keys
-        if model.startswith("openai/") or "/" not in model:
-            return [k for k in config.openai_api_keys if k and len(k) >= 8]
-        # Other LiteLLM-native providers – API key resolved from env vars
-        return []
-
-    @staticmethod
-    def _extra_litellm_params(model: str, config: Config) -> dict:
-        """Build extra litellm params (legacy path only).
-
-        When llm_model_list is populated, the Router already carries api_base
-        and headers per-deployment, so this is not called.
-        """
-        params: Dict[str, Any] = {}
-        # DeepSeek dedicated keys → use DeepSeek API base
-        _model_lower = model.lower()
-        if 'deepseek' in _model_lower and config.deepseek_api_keys:
-            params["api_base"] = "https://api.deepseek.com/v1"
-            return params
-        if model.startswith("openai/") or "/" not in model:
-            if config.openai_base_url:
-                params["api_base"] = config.openai_base_url
-            if config.openai_base_url and "aihubmix.com" in config.openai_base_url:
-                params["extra_headers"] = {"APP-Code": "GPIJ3886"}
-        return params
-
     def _has_channel_config(self, config: Config) -> bool:
         """Check if multi-channel config (channels / YAML / legacy model_list) is active."""
         return bool(config.llm_model_list) and not all(
@@ -610,11 +567,11 @@ class GeminiAnalyzer:
             return
 
         # --- Legacy path: build Router for multi-key, or use single key ---
-        keys = self._get_api_keys_for_model(litellm_model, config)
+        keys = get_api_keys_for_model(litellm_model, config)
 
         if len(keys) > 1:
             # Build legacy Router for primary model multi-key load-balancing
-            extra_params = self._extra_litellm_params(litellm_model, config)
+            extra_params = extra_litellm_params(litellm_model, config)
             legacy_model_list = [
                 {
                     "model_name": litellm_model,
@@ -700,10 +657,10 @@ class GeminiAnalyzer:
                     response = self._router.completion(**call_kwargs)
                 else:
                     # Legacy path: direct call for fallback models
-                    keys = self._get_api_keys_for_model(model, config)
+                    keys = get_api_keys_for_model(model, config)
                     if keys:
                         call_kwargs["api_key"] = keys[0]
-                    call_kwargs.update(self._extra_litellm_params(model, config))
+                    call_kwargs.update(extra_litellm_params(model, config))
                     response = litellm.completion(**call_kwargs)
 
                 if response and response.choices and response.choices[0].message.content:

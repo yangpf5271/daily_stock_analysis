@@ -423,7 +423,7 @@ class Config:
             elif anthropic_api_keys:
                 litellm_model = f'anthropic/{_anthropic_model_name}'
             elif deepseek_api_keys:
-                litellm_model = 'openai/deepseek-chat'
+                litellm_model = 'deepseek/deepseek-chat'
             elif openai_api_keys:
                 # For openai-compatible models, add prefix only if not already prefixed
                 if '/' not in _openai_model_name:
@@ -849,7 +849,7 @@ class Config:
                     'litellm_params': params,
                 })
 
-        # DeepSeek keys (independent provider with fixed base_url)
+        # DeepSeek keys (native litellm provider — auto-resolves api_base)
         for k in (deepseek_keys or []):
             if k and len(k) >= 8:
                 model_list.append({
@@ -857,7 +857,6 @@ class Config:
                     'litellm_params': {
                         'model': '__legacy_deepseek__',
                         'api_key': k,
-                        'api_base': 'https://api.deepseek.com/v1',
                     },
                 })
 
@@ -1030,6 +1029,47 @@ class Config:
 def get_config() -> Config:
     """获取全局配置实例的快捷方式"""
     return Config.get_instance()
+
+
+# ============================================================
+# Shared LLM helpers (used by both analyzer and agent/llm_adapter)
+# ============================================================
+
+def get_api_keys_for_model(model: str, config: Config) -> List[str]:
+    """Return explicitly managed API keys for a litellm model (legacy path only).
+
+    When llm_model_list is populated (channels / YAML), the Router handles key
+    selection, so this function is not needed.  Kept for backward compat when
+    no Router is built and a direct litellm.completion() call is needed.
+    """
+    if model.startswith("gemini/") or model.startswith("vertex_ai/"):
+        return [k for k in config.gemini_api_keys if k and len(k) >= 8]
+    if model.startswith("anthropic/"):
+        return [k for k in config.anthropic_api_keys if k and len(k) >= 8]
+    if model.startswith("deepseek/"):
+        return [k for k in config.deepseek_api_keys if k and len(k) >= 8]
+    if model.startswith("openai/") or "/" not in model:
+        return [k for k in config.openai_api_keys if k and len(k) >= 8]
+    # Other LiteLLM-native providers – API key resolved from env vars
+    return []
+
+
+def extra_litellm_params(model: str, config: Config) -> Dict[str, Any]:
+    """Build extra litellm params for a model (legacy path only).
+
+    When llm_model_list is populated, the Router already carries api_base
+    and headers per-deployment, so this is not called.
+    """
+    params: Dict[str, Any] = {}
+    # deepseek/ provider: litellm auto-resolves api_base, no manual override needed
+    if model.startswith("deepseek/"):
+        return params
+    if model.startswith("openai/") or "/" not in model:
+        if config.openai_base_url:
+            params["api_base"] = config.openai_base_url
+        if config.openai_base_url and "aihubmix.com" in config.openai_base_url:
+            params["extra_headers"] = {"APP-Code": "GPIJ3886"}
+    return params
 
 
 if __name__ == "__main__":

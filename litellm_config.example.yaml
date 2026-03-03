@@ -28,18 +28,16 @@ model_list:
       api_key: "os.environ/AIHUBMIX_KEY"
       api_base: https://aihubmix.com/v1
 
-  # --- DeepSeek 官方 API (OpenAI 兼容) ---
-  - model_name: openai/deepseek-chat
+  # --- DeepSeek 官方 API (原生 provider，自动解析 base_url) ---
+  - model_name: deepseek/deepseek-chat
     litellm_params:
-      model: openai/deepseek-chat
+      model: deepseek/deepseek-chat
       api_key: "os.environ/DEEPSEEK_API_KEY"
-      api_base: https://api.deepseek.com/v1
 
-  - model_name: openai/deepseek-reasoner
+  - model_name: deepseek/deepseek-reasoner
     litellm_params:
-      model: openai/deepseek-reasoner
+      model: deepseek/deepseek-reasoner
       api_key: "os.environ/DEEPSEEK_API_KEY"
-      api_base: https://api.deepseek.com/v1
 
   # --- Google Gemini (原生，多 Key 负载均衡) ---
   - model_name: gemini/gemini-2.5-flash
